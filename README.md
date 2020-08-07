@@ -19,3 +19,19 @@ Requirements:
 * ip command (from iproute2)
 * sfdisk
 * 1GB of diskspace
+
+```
+  Usage: ./debootscript.sh <options>
+  Available options:
+  -h                    print usage information
+  -b <root_device>      (mandatory) which block device to install to
+  -n <target_hostname>  hostname of target system
+  -t <partition_type>   partition type to use ("gpt" or "mbr")
+  -l                    use LVM
+  -d                    install debian instead of ubuntu
+  -r <release>          distro release (defaults are focal for ubuntu and buster for debian)
+  -m <url>              mirror url to use
+  -u <username>         (mandatory) name of user to create
+  -s <ssh_key>          (mandatory if -p not used) install sshd and set this key for the new user
+  -p <password>         (mandatory if -s not used) password to set for the new user
+```
