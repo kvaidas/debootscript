@@ -298,7 +298,7 @@ chroot_actions() {
   apt-get autoremove
   apt-get clean
 }
-export target_hostname use_lvm partition_type distro target_user target_password ssh_public_key
+export root_device target_hostname use_lvm partition_type distro target_user target_password ssh_public_key
 chroot /target /bin/bash -O nullglob -O extglob -ec "$(declare -f chroot_actions) && chroot_actions"
 
 ###########
