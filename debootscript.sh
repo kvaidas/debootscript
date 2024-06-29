@@ -15,8 +15,8 @@ print_usage() {
   -n <target_hostname>  hostname of target system
   -t <partition_type>   partition type to use ("gpt" or "mbr")
   -l                    use LVM
-  -d                    install debian instead of ubuntu
-  -r <release>          distro release (defaults are focal for ubuntu and buster for debian)
+  -d <distribution>     distribution to install ("debian" or "ubuntu")
+  -r <release>          distro release to install
   -m <url>              mirror url to use
   -u <username>         (mandatory) name of user to create
   -s <ssh_key>          (mandatory if -p not used) install sshd and set this key for the new user
@@ -29,7 +29,7 @@ if [[ $# = 0 ]]; then
   exit 1
 fi
 
-while getopts hb:n:t:ldr:m:u:s:p: options; do
+while getopts hb:n:t:ld:r:m:u:s:p: options; do
   case $options in
     h)
       print_usage
@@ -48,7 +48,7 @@ while getopts hb:n:t:ldr:m:u:s:p: options; do
       use_lvm=y
       ;;
     d)
-      distro=debian
+      distro=$OPTARG
       ;;
     r)
       distro_release=$OPTARG
@@ -114,7 +114,18 @@ if [[ -v use_lvm ]] && ! command -v pvcreate &> /dev/null; then
 fi
 
 if [[ ! -v distro ]]; then
-  distro=ubuntu
+  echo 'Distro not specified'
+  exit 1
+fi
+
+if [[ $distro != debian && $distro != ubuntu ]]; then
+  echo "Only 'debian' and 'ubuntu' ar valid distros. You set it to: ${distro}"
+  exit 1
+fi
+
+if [[ ! -v distro_release ]]; then
+  echo 'Distro release not specified'
+  exit 1
 fi
 
 if [[ ! -v target_user ]]; then
@@ -203,12 +214,10 @@ fi
 
 # Debootstrap and chroot preparations
 if [[ $distro = ubuntu ]]; then
-  distro_release=${distro_release:="focal"}
   if [[ ! -v mirror ]]; then
     mirror=$(curl -s mirrors.ubuntu.com/mirrors.txt | head -1)
   fi
 else
-  distro_release=${distro_release:="buster"}
   if [[ -v mirror ]]; then
     mirror="http://ftp.debian.org/debian/"
   fi
