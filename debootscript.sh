@@ -233,14 +233,7 @@ chroot_actions() {
     apt-get install -y lvm2
   fi
   if [[ $partition_type = gpt ]]; then
-    local kernel_path
-    kernel_path='/'
-    if [[ $distro = ubuntu ]]; then
-      kernel_path="${kernel_path}boot"
-    fi
-    echo -e "#!/bin/sh\ncp -f ${kernel_path}/vmlinuz ${kernel_path}/initrd.img /boot/efi" > \
-      /etc/kernel/postinst.d/zz-update-efistub
-    chmod +x /etc/kernel/postinst.d/zz-update-efistub
+    apt-get install -y systemd-boot
   else
     echo "grub-pc grub-pc/install_devices multiselect ${root_device}" | debconf-set-selections
     apt-get install -y grub-pc
