@@ -12,7 +12,7 @@ print_usage() {
   Available options:
   -h                    print usage information
   -b <root_device>      (mandatory) which block device to install to
-  -n <target_hostname>  hostname of target system
+  -n <target_hostname>  hostname of target system (inherits current one if not specified)
   -t <partition_type>   partition type to use ("gpt" or "mbr")
   -l                    use LVM
   -d <distribution>     distribution to install ("debian" or "ubuntu")
