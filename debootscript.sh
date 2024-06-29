@@ -237,6 +237,8 @@ chroot_actions() {
   else
     echo "grub-pc grub-pc/install_devices multiselect ${root_device}" | debconf-set-selections
     apt-get install -y grub-pc
+    update-grub
+    grub-install "${root_device}"
   fi
 
   # Common packages
