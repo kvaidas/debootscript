@@ -1,4 +1,6 @@
 #!/bin/bash
+set -e
+set -x
 shopt -s nullglob
 shopt -s extglob
 
@@ -84,15 +86,26 @@ if [[ $UID != 0 ]]; then
   exit 1
 fi
 
-for command in mkfs.ext4 debootstrap ip; do
+# Check if required filesystems are supported
+for fs in ext4, vfat; do
+  if ! grep -q $fs /proc/filesystems; then
+    echo "Filesystem $fs not supported by kernel"
+    exit 1
+  fi
+done
+
+for command in sfdisk mkfs.ext4 debootstrap ip; do
   if ! command -v $command &> /dev/null; then
     echo "Required command \"${command}\" not found"
     exit 1
   fi
 done
 
-# Check necessary parameters
+if [ "$(blkid --version)" ]; then
+  echo "Busybox blkid is incompatible with this script, use blkid from util-linux"
+fi
 
+# Check necessary parameters
 if [[ -z $root_device ]]; then
   echo 'Root device not set' >&2
   exit 1
@@ -102,9 +115,12 @@ if [[ ! -b $root_device ]]; then
   exit 1
 fi
 
-if [[ $partition_type != gpt && $partition_type != mbr ]]; then
-  echo "Unsupported partition type: ${partition_type}" >&2
-  exit 1
+if [[ -z $partition_type ]]; then
+  if [ -e /sys/firmware/efi ]; then
+    partition_type=gpt;
+  else
+    partition_type=mbr
+  fi
 fi
 
 if [[ -v encryption_password ]] && ! command -v cryptsetup &> /dev/null; then
@@ -155,7 +171,6 @@ fi
 sfdisk --dump "${root_device}" || true
 
 if [[ $partition_type = gpt ]]; then
-
   boot_partition_size=${boot_partition_size:=100}
   if [[ -v use_lvm ]]; then
     root_partition_type="E6D6D379-F507-44C2-A23C-238F2A3DF928"
@@ -167,9 +182,7 @@ if [[ $partition_type = gpt ]]; then
     type=${root_partition_type}
     "
   echo "$partition_script" | sfdisk --label gpt "${root_device}"
-
 elif [[ $partition_type = mbr ]]; then
-
   boot_partition_size=${boot_partition_size:=200}
   if [[ -v use_lvm ]]; then
     root_partition_type="8e"
@@ -181,7 +194,6 @@ elif [[ $partition_type = mbr ]]; then
     type=${root_partition_type}
   "
   echo "$partition_script" | sfdisk --label dos "${root_device}"
-
 fi
 
 # Encryption
@@ -211,8 +223,9 @@ fi
 if [[ $partition_type = gpt ]]; then
   mkfs.fat -F32 "$root_device"1
 else
-  mkfs.ext2 -m 1 "${root_device}"1
+  mkfs.ext2 -m 1 "$root_device"1
 fi
+
 if [[ -v use_lvm ]]; then
   mkfs.ext4 -m 1 /dev/mapper/root_vg-root_lv
   root_partition_uuid=$(blkid -o export /dev/mapper/root_vg-root_lv | grep -E '^UUID=')
@@ -225,7 +238,7 @@ else
 fi
 
 # Mount filesystems
-mkdir /target
+mkdir -p /target
 if [[ -v use_lvm ]]; then
   mount /dev/mapper/root_vg-root_lv /target
 elif [[ -v encryption_password ]]; then
@@ -233,6 +246,7 @@ elif [[ -v encryption_password ]]; then
 else
   mount "${root_device}"2 /target
 fi
+
 if [[ $partition_type = gpt ]]; then
   mkdir -p /target/boot/efi
   mount -o umask=077 "${root_device}"1 /target/boot/efi
@@ -253,6 +267,7 @@ else
   fi
 fi
 debootstrap --variant=minbase "$distro_release" /target "$mirror"
+
 mount --bind /dev /target/dev
 if [[ -v encryption_password ]]; then
   echo "encrypted $root_partition_uuid none luks" > /target/etc/crypttab
@@ -305,7 +320,7 @@ chroot_actions() {
   fi
 
   # Common packages
-  apt-get install -y netbase isc-dhcp-client systemd-sysv whiptail sudo initramfs-tools
+  apt-get install -y netbase isc-dhcp-client systemd-sysv whiptail sudo initramfs-tools e2fsprogs
 
   # Distro-specific packages
   if [[ $distro = ubuntu ]]; then
