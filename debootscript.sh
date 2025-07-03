@@ -14,6 +14,7 @@ print_usage() {
   -b <root_device>      (mandatory) which block device to install to
   -n <target_hostname>  hostname of target system (inherits current one if not specified)
   -t <partition_type>   partition type to use ("gpt" or "mbr")
+  -e <password>         encrypt root partition with this password
   -l                    use LVM
   -d <distribution>     distribution to install ("debian" or "ubuntu")
   -r <release>          distro release to install
@@ -29,7 +30,7 @@ if [[ $# = 0 ]]; then
   exit 1
 fi
 
-while getopts hb:n:t:ld:r:m:u:s:p: options; do
+while getopts hb:n:t:e:ld:r:m:u:s:p: options; do
   case $options in
     h)
       print_usage
@@ -43,6 +44,9 @@ while getopts hb:n:t:ld:r:m:u:s:p: options; do
       ;;
     t)
       partition_type=$OPTARG
+      ;;
+    e)
+      encryption_password=$OPTARG
       ;;
     l)
       use_lvm=y
@@ -100,6 +104,11 @@ fi
 
 if [[ $partition_type != gpt && $partition_type != mbr ]]; then
   echo "Unsupported partition type: ${partition_type}" >&2
+  exit 1
+fi
+
+if [[ -v encryption_password ]] && ! command -v cryptsetup &> /dev/null; then
+  echo 'Required command "cryptsetup" not found' >&2
   exit 1
 fi
 
@@ -175,10 +184,26 @@ elif [[ $partition_type = mbr ]]; then
 
 fi
 
+# Encryption
+if [[ -v encryption_password ]]; then
+  echo -n "$encryption_password" \
+  | cryptsetup luksFormat \
+    --key-file - \
+    --iter-time 10000 \
+    --type luks2 \
+    "$root_device"2
+  echo -n "$encryption_password" | cryptsetup luksOpen --key-file=- "${root_device}2" encrypted
+fi
+
 # LVM
 if [[ -v use_lvm ]]; then
-  pvcreate "${root_device}"2
-  vgcreate root_vg "${root_device}"2
+  if [[ -v encryption_password ]]; then
+    pvcreate /dev/mapper/encrypted
+    vgcreate root_vg /dev/mapper/encrypted
+  else
+    pvcreate "${root_device}"2
+    vgcreate root_vg "${root_device}"2
+  fi
   lvcreate -y -L 1G -n root_lv root_vg
 fi
 
@@ -190,23 +215,28 @@ else
 fi
 if [[ -v use_lvm ]]; then
   mkfs.ext4 -m 1 /dev/mapper/root_vg-root_lv
-  root_uuid=$(blkid -o export /dev/mapper/root_vg-root_lv | grep -E '^UUID=')
+  root_partition_uuid=$(blkid -o export /dev/mapper/root_vg-root_lv | grep -E '^UUID=')
+elif [[ -v encryption_password ]]; then
+  mkfs.ext4 -m 1 /dev/mapper/encrypted
+  encrypted_uuid=$(blkid -o export /dev/mapper/encrypted | grep -E '^UUID=')
 else
-  mkfs.ext4 -m 1 "${root_device}"2
-  root_uuid=$(blkid -o export "${root_device}"2 | grep -E '^UUID=')
+  mkfs.ext4 -m 1 "$root_device"2
+  root_partition_uuid=$(blkid -o export "$root_device"2 | grep -E '^UUID=')
 fi
 
 # Mount filesystems
 mkdir /target
 if [[ -v use_lvm ]]; then
   mount /dev/mapper/root_vg-root_lv /target
+elif [[ -v encryption_password ]]; then
+  mount /dev/mapper/encrypted /target
 else
   mount "${root_device}"2 /target
 fi
 if [[ $partition_type = gpt ]]; then
   mkdir -p /target/boot/efi
-  mount "${root_device}"1 /target/boot/efi
-  echo "fs0:\vmlinuz root=${root_uuid} initrd=initrd.img" > /target/boot/efi/startup.nsh
+  mount -o umask=077 "${root_device}"1 /target/boot/efi
+  echo "fs0:\vmlinuz root=${root_partition_uuid} initrd=initrd.img" > /target/boot/efi/startup.nsh
 else
   mkdir /target/boot
   mount "${root_device}"1 /target/boot
@@ -223,8 +253,22 @@ else
   fi
 fi
 debootstrap --variant=minbase "$distro_release" /target "$mirror"
-for fs in proc dev sys; do mount --bind /$fs /target/$fs; done
-echo "$root_uuid / ext4 rw,noatime,nodiratime 0 1" > /target/etc/fstab
+mount --bind /dev /target/dev
+if [[ -v encryption_password ]]; then
+  echo "encrypted $root_partition_uuid none luks" > /target/etc/crypttab
+  echo "$encrypted_uuid / ext4 rw,noatime,nodiratime 0 1" > /target/etc/fstab
+  mkdir -p /target/etc/kernel/install.d
+  printf '%s\n' \
+    '#!/bin/bash' \
+    'if [ $1 != "add" ]; then exit; fi' \
+    'loader_config=/boot/efi/loader/entries/$(cat /etc/machine-id)-${2}.conf' \
+    "sed -i'' '/^options / s#\$# cryptdevice=${root_partition_uuid}:encrypted root=/dev/mapper/encrypted#' \$loader_config" \
+    'sed -i"" "/^options / s#quiet#net.ifnames=0#" $loader_config' \
+    > /target/etc/kernel/install.d/90-root-luks.install
+  chmod +x /target/etc/kernel/install.d/90-root-luks.install
+else
+  echo "$root_partition_uuid / ext4 rw,noatime,nodiratime 0 1" > /target/etc/fstab
+fi
 echo -e "APT::Install-Recommends no;\nAPT::Install-Suggests no;" > /target/etc/apt/apt.conf.d/90no-extra
 
 ####################
@@ -232,6 +276,11 @@ echo -e "APT::Install-Recommends no;\nAPT::Install-Suggests no;" > /target/etc/a
 ####################
 
 chroot_actions() {
+  mount -t sysfs sys /sys
+  if [[ $partition_type = gpt ]]; then
+    mount -t efivarfs efivarfs /sys/firmware/efi/efivars
+  fi
+
   if [[ -n $target_hostname ]]; then
     hostname "$target_hostname" && echo "$target_hostname" > /etc/hostname
   fi
@@ -241,9 +290,14 @@ chroot_actions() {
   if [[ -v use_lvm ]]; then
     apt-get install -y lvm2
   fi
+  if [[ -v encryption_password ]]; then
+    apt-get install -y cryptsetup-initramfs
+  fi
   if [[ $partition_type = gpt ]]; then
     apt-get install -y systemd-boot
   else
+    mkdir -p /etc/default/grub.d
+    echo 'GRUB_CMDLINE_LINUX_DEFAULT="net.ifnames=0"' > /etc/default/grub.d/cmdline.cfg
     echo "grub-pc grub-pc/install_devices multiselect ${root_device}" | debconf-set-selections
     apt-get install -y grub-pc
     update-grub
@@ -302,7 +356,7 @@ chroot_actions() {
   apt-get autoremove
   apt-get clean
 }
-export root_device target_hostname use_lvm partition_type distro target_user target_password ssh_public_key
+export root_device target_hostname use_lvm partition_type encryption_password distro target_user target_password ssh_public_key
 chroot /target /bin/bash -O nullglob -O extglob -ec "$(declare -f chroot_actions) && chroot_actions"
 
 ###########
@@ -310,8 +364,11 @@ chroot /target /bin/bash -O nullglob -O extglob -ec "$(declare -f chroot_actions
 ###########
 
 if [[ $partition_type = gpt ]]; then
-  umount /target/boot/efi
+  umount /target/sys/firmware/efi/efivars /target/boot/efi
 else
   umount /target/boot
 fi
 for fs in proc dev sys ''; do umount "/target/$fs"; done
+if [[ -v encryption_password ]]; then
+  cryptsetup close encrypted
+fi
