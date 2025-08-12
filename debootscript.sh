@@ -88,7 +88,7 @@ if [[ $UID != 0 ]]; then
 fi
 
 # Check if required filesystems are supported
-for fs in ext4, vfat; do
+for fs in ext4 vfat; do
   if ! grep -q $fs /proc/filesystems; then
     echo "Filesystem $fs not supported by kernel"
     exit 1
@@ -102,7 +102,7 @@ for command in sfdisk mkfs.ext4 debootstrap ip; do
   fi
 done
 
-if [ "$(blkid --version)" ]; then
+if [ -z "$(blkid --version)" ]; then
   echo "Busybox blkid is incompatible with this script, use blkid from util-linux"
 fi
 
@@ -118,7 +118,7 @@ fi
 
 if [[ -z $partition_type ]]; then
   if [ -e /sys/firmware/efi ]; then
-    partition_type=gpt;
+    partition_type=gpt
   else
     partition_type=mbr
   fi
@@ -143,7 +143,6 @@ if [[ ! -v distro ]]; then
   echo 'Distro not specified'
   exit 1
 fi
-
 if [[ $distro != debian && $distro != ubuntu ]]; then
   echo "Only 'debian' and 'ubuntu' ar valid distros. You set it to: ${distro}"
   exit 1
@@ -182,7 +181,7 @@ sfdisk --dump "${root_device}" || true
 
 if [[ $partition_type = gpt ]]; then
   boot_partition_size=${boot_partition_size:=100}
-  if [[ -v use_lvm ]]; then
+  if [[ -v use_lvm ]] && [[ ! -v encryption_password ]]; then
     root_partition_type="E6D6D379-F507-44C2-A23C-238F2A3DF928"
   else
     root_partition_type="4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709"
@@ -194,7 +193,7 @@ if [[ $partition_type = gpt ]]; then
   echo "$partition_script" | sfdisk --label gpt "${root_device}"
 elif [[ $partition_type = mbr ]]; then
   boot_partition_size=${boot_partition_size:=200}
-  if [[ -v use_lvm ]]; then
+  if [[ -v use_lvm ]] && [[ ! -v encryption_password ]]; then
     root_partition_type="8e"
   else
     root_partition_type="83"
@@ -226,7 +225,7 @@ if [[ -v use_lvm ]]; then
     pvcreate "${root_device}"2
     vgcreate root_vg "${root_device}"2
   fi
-  lvcreate -y -L 1G -n root_lv root_vg
+  lvcreate -y -l 100%FREE -n root_lv root_vg
 fi
 
 # Create filesystems
@@ -238,13 +237,10 @@ fi
 
 if [[ -v use_lvm ]]; then
   mkfs.ext4 -m 1 /dev/mapper/root_vg-root_lv
-  root_partition_uuid=$(blkid -o export /dev/mapper/root_vg-root_lv | grep -E '^UUID=')
 elif [[ -v encryption_password ]]; then
   mkfs.ext4 -m 1 /dev/mapper/encrypted
-  encrypted_uuid=$(blkid -o export /dev/mapper/encrypted | grep -E '^UUID=')
 else
   mkfs.ext4 -m 1 "$root_device"2
-  root_partition_uuid=$(blkid -o export "$root_device"2 | grep -E '^UUID=')
 fi
 
 # Mount filesystems
@@ -260,7 +256,8 @@ fi
 if [[ $partition_type = gpt ]]; then
   mkdir -p /target/boot/efi
   mount -o umask=077 "${root_device}"1 /target/boot/efi
-  echo "fs0:\vmlinuz root=${root_partition_uuid} initrd=initrd.img" > /target/boot/efi/startup.nsh
+  uuid=$(blkid -o export "$root_device"2 | grep -E '^UUID=')
+  echo "fs0:\vmlinuz root=${uuid} initrd=initrd.img" > /target/boot/efi/startup.nsh
 else
   mkdir /target/boot
   mount "${root_device}"1 /target/boot
@@ -269,10 +266,7 @@ fi
 # Debootstrap and chroot preparations
 debootstrap --variant=minbase "$distro_release" /target "$mirror"
 
-mount --bind /dev /target/dev
-if [[ -v encryption_password ]]; then
-  echo "encrypted $root_partition_uuid none luks" > /target/etc/crypttab
-  echo "$encrypted_uuid / ext4 rw,noatime,nodiratime 0 1" > /target/etc/fstab
+if [[ $partition_type = gpt ]]; then
   mkdir -p /target/etc/kernel/install.d
   printf '%s\n' \
     '#!/bin/bash' \
@@ -281,10 +275,29 @@ if [[ -v encryption_password ]]; then
     "sed -i'' '/^options / s#quiet#${kernel_parameters}#' \$loader_config" \
     > /target/etc/kernel/install.d/90-root-luks.install
   chmod +x /target/etc/kernel/install.d/90-root-luks.install
-else
-  echo "$root_partition_uuid / ext4 rw,noatime,nodiratime 0 1" > /target/etc/fstab
 fi
+
+# Create fstab (and crypttab if needed)
+if [[ -v use_lvm ]]; then
+  fstab_root='/dev/mapper/root_vg-root_lv'
+elif [[ -v encryption_password ]]; then
+  fstab_root='/dev/mapper/encrypted'
+else
+  fstab_root=$(blkid -o export "$root_device"2 | grep -E '^UUID=')
+fi
+
+if [[ -v encryption_password ]]; then
+  uuid=$(blkid -o export "${root_device}2" | grep -E '^UUID=')
+  echo "encrypted $uuid none luks" > /target/etc/crypttab
+  printf '%s\n' \
+    "sed -i'' '/^options / s#\$# cryptdevice=${uuid}:encrypted root=${fstab_root}#' \$loader_config" \
+    >> /target/etc/kernel/install.d/90-root-luks.install
+fi
+
+echo "$fstab_root / ext4 rw,noatime,nodiratime 0 1" > /target/etc/fstab
+
 echo -e "APT::Install-Recommends no;\nAPT::Install-Suggests no;" > /target/etc/apt/apt.conf.d/90no-extra
+mount --bind /dev /target/dev
 
 ####################
 # Chrooted actions #
@@ -292,6 +305,7 @@ echo -e "APT::Install-Recommends no;\nAPT::Install-Suggests no;" > /target/etc/a
 
 chroot_actions() {
   mount -t sysfs sys /sys
+  mount -t proc proc /proc
   if [[ $partition_type = gpt ]]; then
     mount -t efivarfs efivarfs /sys/firmware/efi/efivars
   fi
@@ -306,7 +320,7 @@ chroot_actions() {
     apt-get install -y lvm2
   fi
   if [[ -v encryption_password ]]; then
-    apt-get install -y cryptsetup-initramfs
+    apt-get install -y systemd-cryptsetup cryptsetup
   fi
   if [[ $partition_type = gpt ]]; then
     apt-get install -y systemd-boot
@@ -353,7 +367,6 @@ chroot_actions() {
   > /etc/systemd/network/20-dhcp.network
 
   # Finish up
-  apt-get autoremove
   apt-get clean
 }
 export root_device target_hostname use_lvm partition_type encryption_password distro target_user target_password ssh_public_key kernel_parameters
@@ -369,6 +382,9 @@ else
   umount /target/boot
 fi
 for fs in proc dev sys ''; do umount "/target/$fs"; done
+if [[ -v use_lvm ]]; then
+  vgchange -an root_vg
+fi
 if [[ -v encryption_password ]]; then
   cryptsetup close encrypted
 fi
