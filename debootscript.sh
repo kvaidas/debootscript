@@ -153,6 +153,15 @@ if [[ ! -v distro_release ]]; then
   exit 1
 fi
 
+if [[ ! -v mirror ]]; then
+  if [[ $distro = ubuntu ]]; then
+    mirror='http://archive.ubuntu.com/ubuntu/'
+  else
+    mirror='http://deb.debian.org/debian/'
+  fi
+fi
+
+
 if [[ ! -v target_user ]]; then
   echo 'User name to create not specified' >&2
   exit 1
@@ -257,15 +266,6 @@ else
 fi
 
 # Debootstrap and chroot preparations
-if [[ $distro = ubuntu ]]; then
-  if [[ ! -v mirror ]]; then
-    mirror=$(curl -s mirrors.ubuntu.com/mirrors.txt | head -1)
-  fi
-else
-  if [[ -v mirror ]]; then
-    mirror="http://ftp.debian.org/debian/"
-  fi
-fi
 debootstrap --variant=minbase "$distro_release" /target "$mirror"
 
 mount --bind /dev /target/dev

@@ -14,7 +14,6 @@ What it does:
 Requirements:
 * Is run as root
 * Linux system with bash
-* curl if installing Ubuntu (can be avoided by specifying a mirror to use)
 * mkfs.ext4 (mkfs.fat too if using GPT)
 * debootstrap (non Debian-based systems might work with something like `cd / ; curl -O http://archive.ubuntu.com/ubuntu/pool/main/d/debootstrap/debootstrap_1.0.123ubuntu1_all.deb ; ar -x debootstrap_1.0.123ubuntu1_all.deb ; tar zxf data.tar.gz`)
 * ip command (from iproute2)
