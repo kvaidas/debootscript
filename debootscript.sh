@@ -3,6 +3,7 @@ set -e
 set -x
 shopt -s nullglob
 shopt -s extglob
+kernel_parameters='rd.shell rd.auto console=ttyS0 console=tty0'
 
 ###########################
 # Print usage information #
@@ -277,8 +278,7 @@ if [[ -v encryption_password ]]; then
     '#!/bin/bash' \
     'if [ $1 != "add" ]; then exit; fi' \
     'loader_config=/boot/efi/loader/entries/$(cat /etc/machine-id)-${2}.conf' \
-    "sed -i'' '/^options / s#\$# cryptdevice=${root_partition_uuid}:encrypted root=/dev/mapper/encrypted#' \$loader_config" \
-    'sed -i"" "/^options / s#quiet#net.ifnames=0#" $loader_config' \
+    "sed -i'' '/^options / s#quiet#${kernel_parameters}#' \$loader_config" \
     > /target/etc/kernel/install.d/90-root-luks.install
   chmod +x /target/etc/kernel/install.d/90-root-luks.install
 else
@@ -311,22 +311,21 @@ chroot_actions() {
   if [[ $partition_type = gpt ]]; then
     apt-get install -y systemd-boot
   else
-    mkdir -p /etc/default/grub.d
-    echo 'GRUB_CMDLINE_LINUX_DEFAULT="net.ifnames=0"' > /etc/default/grub.d/cmdline.cfg
     echo "grub-pc grub-pc/install_devices multiselect ${root_device}" | debconf-set-selections
     apt-get install -y grub-pc
+    sed -i'' "s/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT=\"${kernel_parameters}\"/" /etc/default/grub
     update-grub
     grub-install "${root_device}"
   fi
 
   # Common packages
-  apt-get install -y netbase isc-dhcp-client systemd-sysv whiptail sudo initramfs-tools e2fsprogs
+  apt-get install -y netbase systemd-sysv whiptail sudo dracut e2fsprogs
 
   # Distro-specific packages
   if [[ $distro = ubuntu ]]; then
-    apt-get install -y linux-image-virtual netplan.io
+    apt-get install -y linux-image-generic
   else
-    apt-get install -y "linux-image-$(dpkg --print-architecture)" ifupdown
+    apt-get install -y "linux-image-$(dpkg --print-architecture)"
   fi
 
   # Set up access
@@ -345,33 +344,19 @@ chroot_actions() {
   fi
 
   # Set up network
-  if [[ $distro = ubuntu ]]; then
-    printf '%s\n' \
-      'network:' \
-      '  version: 2' \
-      '  renderer: networkd' \
-      '  ethernets:' \
-      > /etc/netplan/interfaces.yaml
-    for interface in /sys/class/net/!(lo); do
-      interface=$(basename "$interface")
-      printf '%s\n' \
-        "    $interface:" \
-        '      dhcp4: true' \
-        >> /etc/netplan/interfaces.yaml
-    done
-  else
-    for interface in /sys/class/net/!(lo); do
-      interface=$(basename "$interface")
-      echo "auto ${interface}" >> /etc/network/interfaces
-      echo -e "iface ${interface} inet dhcp" >> /etc/network/interfaces
-    done
-  fi
+  systemctl enable systemd-networkd
+  printf '%s\n' \
+    '[Match]' \
+    'Type=ether' \
+    '[Network]' \
+    'DHCP=yes' \
+  > /etc/systemd/network/20-dhcp.network
 
   # Finish up
   apt-get autoremove
   apt-get clean
 }
-export root_device target_hostname use_lvm partition_type encryption_password distro target_user target_password ssh_public_key
+export root_device target_hostname use_lvm partition_type encryption_password distro target_user target_password ssh_public_key kernel_parameters
 chroot /target /bin/bash -O nullglob -O extglob -ec "$(declare -f chroot_actions) && chroot_actions"
 
 ###########
