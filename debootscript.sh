@@ -3,7 +3,7 @@ set -e
 set -x
 shopt -s nullglob
 shopt -s extglob
-kernel_parameters='rd.shell rd.auto console=ttyS0 console=tty0'
+kernel_parameters='rd.shell rd.auto console=ttyS0 console=tty0 SYSTEMD_SULOGIN_FORCE'
 
 ###########################
 # Print usage information #
@@ -161,7 +161,6 @@ if [[ ! -v mirror ]]; then
   fi
 fi
 
-
 if [[ ! -v target_user ]]; then
   echo 'User name to create not specified' >&2
   exit 1
@@ -256,28 +255,15 @@ fi
 if [[ $partition_type = gpt ]]; then
   mkdir -p /target/boot/efi
   mount -o umask=077 "${root_device}"1 /target/boot/efi
-  uuid=$(blkid -o export "$root_device"2 | grep -E '^UUID=')
-  echo "fs0:\vmlinuz root=${uuid} initrd=initrd.img" > /target/boot/efi/startup.nsh
 else
   mkdir /target/boot
   mount "${root_device}"1 /target/boot
 fi
 
-# Debootstrap and chroot preparations
+# Debootstrap
 debootstrap --variant=minbase "$distro_release" /target "$mirror"
 
-if [[ $partition_type = gpt ]]; then
-  mkdir -p /target/etc/kernel/install.d
-  printf '%s\n' \
-    '#!/bin/bash' \
-    'if [ $1 != "add" ]; then exit; fi' \
-    'loader_config=/boot/efi/loader/entries/$(cat /etc/machine-id)-${2}.conf' \
-    "sed -i'' '/^options / s#quiet#${kernel_parameters}#' \$loader_config" \
-    > /target/etc/kernel/install.d/90-root-luks.install
-  chmod +x /target/etc/kernel/install.d/90-root-luks.install
-fi
-
-# Create fstab (and crypttab if needed)
+# Create fstab
 if [[ -v use_lvm ]]; then
   fstab_root='/dev/mapper/root_vg-root_lv'
 elif [[ -v encryption_password ]]; then
@@ -285,18 +271,28 @@ elif [[ -v encryption_password ]]; then
 else
   fstab_root=$(blkid -o export "$root_device"2 | grep -E '^UUID=')
 fi
-
-if [[ -v encryption_password ]]; then
-  uuid=$(blkid -o export "${root_device}2" | grep -E '^UUID=')
-  echo "encrypted $uuid none luks" > /target/etc/crypttab
-  printf '%s\n' \
-    "sed -i'' '/^options / s#\$# cryptdevice=${uuid}:encrypted root=${fstab_root}#' \$loader_config" \
-    >> /target/etc/kernel/install.d/90-root-luks.install
-fi
-
 echo "$fstab_root / ext4 rw,noatime,nodiratime 0 1" > /target/etc/fstab
 
-echo -e "APT::Install-Recommends no;\nAPT::Install-Suggests no;" > /target/etc/apt/apt.conf.d/90no-extra
+# Configure EFI bootloader
+if [[ -v encryption_password ]]; then
+  uuid=$(blkid -o export "${root_device}2" | grep -E '^UUID=' | sed 's/.*=//')
+  kernel_parameters="rd.luks.name=${uuid}=encrypted ${kernel_parameters}"
+fi
+if [[ $partition_type = gpt ]]; then
+  kernel_parameters+=" root=${fstab_root}"
+  mkdir -p /target/etc/kernel/install.d
+  printf '%s\n' \
+    '#!/bin/bash' \
+    'if [ $1 != "add" ]; then exit; fi' \
+    'loader_config=/boot/efi/loader/entries/$(cat /etc/machine-id)-${2}.conf' \
+    "sed -i'' '/^options / s#\$# ${kernel_parameters}#' \$loader_config" \
+    > /target/etc/kernel/install.d/90-root-luks.install
+  chmod +x /target/etc/kernel/install.d/90-root-luks.install
+  echo "fs0:\vmlinuz root=${fstab_root} initrd=initrd.img" > /target/boot/efi/startup.nsh
+fi
+
+# Prepare for chroot
+echo -e "APT::Install-Recommends no;\nAPT::Install-Suggests no;\n" > /target/etc/apt/apt.conf.d/90no-extra
 mount --bind /dev /target/dev
 
 ####################
@@ -310,8 +306,11 @@ chroot_actions() {
     mount -t efivarfs efivarfs /sys/firmware/efi/efivars
   fi
 
+  # Hostname
   if [[ -n $target_hostname ]]; then
-    hostname "$target_hostname" && echo "$target_hostname" > /etc/hostname
+    hostname "$target_hostname"
+    echo "$target_hostname" > /etc/hostname
+    echo "127.0.1.1 ${target_hostname}" > /etc/hosts
   fi
   apt-get update
 
@@ -327,7 +326,7 @@ chroot_actions() {
   else
     echo "grub-pc grub-pc/install_devices multiselect ${root_device}" | debconf-set-selections
     apt-get install -y grub-pc
-    sed -i'' "s/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT=\"${kernel_parameters}\"/" /etc/default/grub
+    sed -i'' "s#^GRUB_CMDLINE_LINUX=.*#GRUB_CMDLINE_LINUX=\"${kernel_parameters}\"#" /etc/default/grub
     update-grub
     grub-install "${root_device}"
   fi
@@ -335,14 +334,14 @@ chroot_actions() {
   # Common packages
   apt-get install -y netbase systemd-sysv whiptail sudo dracut e2fsprogs
 
-  # Distro-specific packages
+  # Distro-specific kernel packages
   if [[ $distro = ubuntu ]]; then
     apt-get install -y linux-image-generic
   else
     apt-get install -y "linux-image-$(dpkg --print-architecture)"
   fi
 
-  # Set up access
+  # Set up user login
   useradd -m -s /bin/bash -G sudo "${target_user}"
   if [[ -v target_password ]]; then
     echo -e "${target_password}\n${target_password}" | passwd "$target_user"
@@ -375,7 +374,6 @@ chroot /target /bin/bash -O nullglob -O extglob -ec "$(declare -f chroot_actions
 ###########
 # Cleanup #
 ###########
-
 if [[ $partition_type = gpt ]]; then
   umount /target/sys/firmware/efi/efivars /target/boot/efi
 else
