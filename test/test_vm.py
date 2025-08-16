@@ -11,6 +11,7 @@ import urllib.request
 
 import pexpect.fdpexpect
 
+ramdisk_size_mb=1.5*1024
 alpine_version = '3.22.1'
 qemu_pidfile = 'qemu.pid'
 qemu_socket = 'qemu.sock'
@@ -123,7 +124,7 @@ match os.uname().sysname:
         # Ramdisk
         if not os.path.exists('ramdisk'):
             os.mkdir('ramdisk')
-        result = subprocess.run('mount -t tmpfs -o size=1G tmpfs ramdisk')
+        result = subprocess.run(f'mount -t tmpfs -o size={ramdisk_size_mb}M tmpfs ramdisk')
         if result.returncode != 0:
             print('Failed to mount ramdisk')
             exit(1)
@@ -151,7 +152,10 @@ match os.uname().sysname:
             if os.path.exists('ramdisk'):
                 print('Non-symlink "ramdisk" already exists')
                 exit(1)
-            result = subprocess.run('hdiutil attach -nomount ram://2097152'.split(), capture_output=True)
+            result = subprocess.run(
+                f'hdiutil attach -nomount ram://{ramdisk_size_mb*2048}'.split(),
+                capture_output=True
+            )
             if result.returncode != 0:
                 print('Failed to create ramdisk')
                 exit(1)
@@ -182,6 +186,7 @@ qemu_command = f"""
         -serial unix:{qemu_socket},server,nowait
         -drive file={ramdisk},format=raw
         -net nic -net user,hostfwd=tcp::65522-:22
+        -device virtio-gpu-pci
 """
 
 if arguments.efi:
@@ -200,7 +205,7 @@ match arguments.mode:
                 filename='alpine.iso'
             )
         with open(ramdisk, 'wb') as f:
-            f.write(b'\x00' * 1024 * 1024 * 1024) # 1GB
+            f.write(b'\x00' * int(ramdisk_size_mb * 1024 * 1024)) # 1GB
         s, vm = start_qemu_vm(qemu_command + '-display none -cdrom alpine.iso -boot d')
         vm.expect('login: ')
         vm.sendline('root')
@@ -221,18 +226,24 @@ match arguments.mode:
         vm.expect('localhost:~# ')
 
         # Upload debootscript
-        vm.stdout = None
+        vm.logfile = None
         vm.send(f"""\
             cat > debootscript.sh <<'DEBOOTSCRIPT'
             {debootscript}
         """)
         vm.send('\n')
         vm.sendline('DEBOOTSCRIPT')
+        vm.logfile = sys.stdout
 
-        vm.stdout = sys.stdout
         vm.expect('localhost:~# ')
         vm.sendline(
-            f'http_proxy={http_proxy} bash debootscript.sh -b /dev/sda -u {test_username} -p {test_password} {arguments.append_arguments}'
+            f"""\
+            http_proxy={http_proxy} bash debootscript.sh \
+                -b /dev/sda \
+                -u '{test_username}' \
+                -p '{test_password}' \
+                {arguments.append_arguments}
+            """
         )
         vm.expect('localhost:~# ', timeout=300)
         check_last_command_exit_code(vm)
@@ -241,7 +252,7 @@ match arguments.mode:
     case 'test':
         wait_for_qemu_shutdown()
         s, vm = start_qemu_vm(qemu_command)
-        vm.timeout = 90
+        vm.timeout = 180
         prompt = vm.expect(['(press TAB for no echo)', 'login: '])
         if prompt == 0:
             vm.sendline(test_encryption_password)
