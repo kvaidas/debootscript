@@ -25,6 +25,7 @@ print_usage() {
   -u <username>         (mandatory) name of user to create
   -s <ssh_key>          (mandatory if -p not used) install sshd and set this key for the new user
   -p <password>         (mandatory if -s not used) password to set for the new user
+  -q                    quit after exiting chroot (skip cleanup/unmounts) - for inspecting install result
 EOF
 }
 
@@ -33,7 +34,7 @@ if [[ $# = 0 ]]; then
   exit 1
 fi
 
-while getopts hb:n:t:e:ld:r:m:u:s:p: options; do
+while getopts hb:n:t:e:ld:r:m:u:s:p:q options; do
   case $options in
     h)
       print_usage
@@ -71,6 +72,9 @@ while getopts hb:n:t:e:ld:r:m:u:s:p: options; do
       ;;
     p)
       target_password=$OPTARG
+      ;;
+    q)
+      quit_after_chroot=y
       ;;
     *)
       echo "Unknown option: $options"
@@ -300,6 +304,10 @@ mount --bind /dev /target/dev
 ####################
 
 chroot_actions() {
+  set -x
+  set -e
+
+  # Mounting of chroot filesystems
   mount -t sysfs sys /sys
   mount -t proc proc /proc
   if [[ $partition_type = gpt ]]; then
@@ -370,6 +378,10 @@ chroot_actions() {
 }
 export root_device target_hostname use_lvm partition_type encryption_password distro target_user target_password ssh_public_key kernel_parameters
 chroot /target /bin/bash -O nullglob -O extglob -ec "$(declare -f chroot_actions) && chroot_actions"
+if [[ -v quit_after_chroot ]]; then
+  echo 'Quitting before cleanup'
+  exit
+fi
 
 ###########
 # Cleanup #
