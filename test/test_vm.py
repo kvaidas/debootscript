@@ -23,8 +23,8 @@ http_proxy = os.environ.get('http_proxy')
 
 def get_qemu_pid():
     if os.path.exists(qemu_pidfile):
-        with open(qemu_pidfile) as f:
-            return int(f.read())
+        with open(qemu_pidfile) as pidfile:
+            return int(pidfile.read())
     else:
         return None
 
@@ -32,7 +32,7 @@ def kill_vm():
     pid = get_qemu_pid()
     try:
         os.kill(pid, 0)
-    except:
+    except ProcessLookupError:
         return
     if pid:
         os.kill(pid, signal.SIGINT)
@@ -61,15 +61,15 @@ def start_qemu_vm(command):
     if not os.path.exists(qemu_socket):
         print('Socket did not become available')
         exit(1)
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.connect(qemu_socket)
-    return s, pexpect.fdpexpect.fdspawn(s.fileno(), logfile=sys.stdout, encoding='utf-8')
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(qemu_socket)
+    return sock, pexpect.fdpexpect.fdspawn(s.fileno(), logfile=sys.stdout, encoding='utf-8')
 
-def check_last_command_exit_code(vm):
-    vm.sendline('echo Exit code: $?')
-    vm.readline() # eat the echoed command
-    vm.expect('Exit code: ')
-    status = int(vm.readline())
+def check_last_command_exit_code(fd):
+    fd.sendline('echo Exit code: $?')
+    fd.readline() # eat the echoed command
+    fd.expect('Exit code: ')
+    status = int(fd.readline())
     if status != 0:
         print(f'Last command exit code was {status}')
         exit(1)
@@ -114,13 +114,6 @@ match os.uname().sysname:
     case 'Linux':
         qemu_accel = 'kvm'
 
-        # CPU cores
-        for line in subprocess.run('lscpu', capture_output=True, encoding='UTF-8').stdout.split('\n'):
-            if line.startswith('Core(s) per socket: '):
-                physical_cores = line.split()[-1]
-                break
-        logical_cores = os.cpu_count()
-
         # Ramdisk
         if not os.path.exists('ramdisk'):
             os.mkdir('ramdisk')
@@ -138,14 +131,6 @@ match os.uname().sysname:
     case 'Darwin':
         qemu_accel = 'hvf'
         os.environ['OBJC_DISABLE_INITIALIZE_FORK_SAFETY'] = 'YES'
-
-        # CPU cores
-        physical_cores = int(
-            subprocess.run('sysctl -n hw.physicalcpu'.split(), capture_output=True).stdout
-        )
-        logical_cores = int(
-            subprocess.run('sysctl -n hw.logicalcpu'.split(), capture_output=True).stdout
-        )
 
         # Ramdisk
         if not os.path.islink('ramdisk'):
@@ -172,8 +157,6 @@ match os.uname().sysname:
         print('Unknown OS')
         exit(1)
 
-cpu_cores = physical_cores-2
-cpu_threads = int(logical_cores/physical_cores)
 qemu_command = f"""
     qemu-system-x86_64
         -daemonize
@@ -181,7 +164,7 @@ qemu_command = f"""
         -accel {qemu_accel}
         -machine q35
         -cpu host
-        -smp cores={cpu_cores},threads={cpu_threads}
+        -smp {min(4,os.cpu_count())}
         -m 1G
         -serial unix:{qemu_socket},server,nowait
         -drive file={ramdisk},format=raw
@@ -288,6 +271,7 @@ match arguments.mode:
                 result = subprocess.run(f'hdiutil detach {ramdisk}')
             case _:
                 exit(1)
+
         if result.returncode != 0:
             print('Failed to unmount ramdisk')
             exit(1)

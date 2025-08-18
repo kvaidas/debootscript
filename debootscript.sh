@@ -285,6 +285,7 @@ fi
 if [[ $partition_type = gpt ]]; then
   kernel_parameters+=" root=${fstab_root}"
   mkdir -p /target/etc/kernel/install.d
+  # shellcheck disable=SC2016
   printf '%s\n' \
     '#!/bin/bash' \
     'if [ $1 != "add" ]; then exit; fi' \
@@ -292,6 +293,7 @@ if [[ $partition_type = gpt ]]; then
     "sed -i'' '/^options / s#\$# ${kernel_parameters}#' \$loader_config" \
     > /target/etc/kernel/install.d/90-root-luks.install
   chmod +x /target/etc/kernel/install.d/90-root-luks.install
+  # shellcheck disable=SC2028
   echo "fs0:\vmlinuz root=${fstab_root} initrd=initrd.img" > /target/boot/efi/startup.nsh
 fi
 
