@@ -44,8 +44,8 @@ for p in "${part[@]}"; do
               if [[ $p =~ 'gpt' ]]; then
                 firmware_params='-e'
               fi
-              python3 test_vm.py "$firmware_params" --append-arguments="$d $p $e $l" install
-              python3 test_vm.py "$firmware_params" test
+              python3 test_vm.py install $firmware_params --append-arguments="$d $p $e $l"
+              python3 test_vm.py test $firmware_params
             done
         done
     done

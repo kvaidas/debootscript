@@ -342,7 +342,7 @@ chroot_actions() {
   fi
 
   # Common packages
-  apt-get install -y netbase systemd-sysv whiptail sudo dracut e2fsprogs
+  apt-get install -y netbase systemd-sysv whiptail dracut e2fsprogs
 
   # Distro-specific kernel packages
   if [[ $distro = ubuntu ]]; then
@@ -352,8 +352,9 @@ chroot_actions() {
   fi
 
   # Set up user login
-  useradd -m -s /bin/bash -G sudo "${target_user}"
+  useradd -m -s /bin/bash "${target_user}"
   if [[ -v target_password ]]; then
+    echo -e "${target_password}\n${target_password}" | passwd root
     echo -e "${target_password}\n${target_password}" | passwd "$target_user"
   fi
   if [[ -v ssh_public_key ]]; then
@@ -388,6 +389,7 @@ fi
 ###########
 # Cleanup #
 ###########
+
 if [[ $partition_type = gpt ]]; then
   umount /target/sys/firmware/efi/efivars /target/boot/efi
 else

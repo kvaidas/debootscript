@@ -244,9 +244,11 @@ match arguments.mode:
         vm.expect('Password: ')
         vm.sendline(test_password)
         vm.expect(re.escape('localhost:~$ '))
-        vm.sendline('sudo poweroff')
-        vm.expect(r'password for \w+: ')
+        vm.sendline('su -')
+        vm.expect(r'Password: ')
         vm.sendline(test_password)
+        vm.expect(re.escape('# '))
+        vm.sendline('poweroff')
 
     case 'run':
         if not os.path.exists(qemu_pidfile):
