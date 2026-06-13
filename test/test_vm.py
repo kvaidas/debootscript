@@ -63,7 +63,7 @@ def start_qemu_vm(command):
         exit(1)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.connect(qemu_socket)
-    return sock, pexpect.fdpexpect.fdspawn(s.fileno(), logfile=sys.stdout, encoding='utf-8')
+    return sock, pexpect.fdpexpect.fdspawn(sock.fileno(), logfile=sys.stdout, encoding='utf-8')
 
 def check_last_command_exit_code(fd):
     fd.sendline('echo Exit code: $?')
@@ -164,7 +164,7 @@ qemu_command = f"""
         -accel {qemu_accel}
         -machine q35
         -cpu host
-        -smp {min(4,os.cpu_count())}
+        -smp {os.cpu_count() or 4}
         -m 1G
         -serial unix:{qemu_socket},server,nowait
         -drive file={ramdisk},format=raw
@@ -221,7 +221,7 @@ match arguments.mode:
         vm.expect('localhost:~# ')
         vm.sendline(
             f"""\
-            http_proxy={http_proxy} bash debootscript.sh \
+            {"http_proxy="+http_proxy if http_proxy else ''} bash debootscript.sh \
                 -b /dev/sda \
                 -u '{test_username}' \
                 -p '{test_password}' \
