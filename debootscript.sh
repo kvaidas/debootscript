@@ -275,13 +275,17 @@ elif [[ -v encryption_password ]]; then
 else
   fstab_root=$(blkid -o export "$root_device"2 | grep -E '^UUID=')
 fi
-echo "$fstab_root / ext4 rw,noatime,nodiratime 0 1" > /target/etc/fstab
+if [[ $partition_type = gpt ]]; then
+    boot_mountpoint='/boot/efi'
+else
+    boot_mountpoint='/boot'
+fi
+printf '%s\n' \
+  "$fstab_root / ext4 rw,noatime,nodiratime 0 1" \
+  "${root_device}1 $boot_mountpoint ext2 rw 0 1" \
+  > /target/etc/fstab
 
 # Configure EFI bootloader
-if [[ -v encryption_password ]]; then
-  uuid=$(blkid -o export "${root_device}2" | grep -E '^UUID=' | sed 's/.*=//')
-  kernel_parameters="rd.luks.name=${uuid}=encrypted ${kernel_parameters}"
-fi
 if [[ $partition_type = gpt ]]; then
   kernel_parameters+=" root=${fstab_root}"
   mkdir -p /target/etc/kernel/install.d
@@ -383,7 +387,7 @@ export root_device target_hostname use_lvm partition_type encryption_password di
 chroot /target /bin/bash -O nullglob -O extglob -ec "$(declare -f chroot_actions) && chroot_actions"
 if [[ -v quit_after_chroot ]]; then
   echo 'Quitting before cleanup'
-  exit
+  exit 1
 fi
 
 ###########
