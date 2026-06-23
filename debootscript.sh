@@ -23,8 +23,7 @@ print_usage() {
   -r <release>          distro release to install
   -m <url>              mirror url to use
   -u <username>         (mandatory) name of user to create
-  -s <ssh_key>          (mandatory if -p not used) install sshd and set this key for the new user
-  -p <password>         (mandatory if -s not used) password to set for the new user
+  -p <password>         (mandatory) password to set for the new user
   -q                    quit after exiting chroot (skip cleanup/unmounts) - for inspecting install result
 EOF
 }
@@ -66,9 +65,6 @@ while getopts hb:n:t:e:ld:r:m:u:s:p:q options; do
       ;;
     u)
       target_user=$OPTARG
-      ;;
-    s)
-      ssh_public_key=$OPTARG
       ;;
     p)
       target_password=$OPTARG
@@ -170,8 +166,8 @@ if [[ ! -v target_user ]]; then
   exit 1
 fi
 
-if [[ ! -v ssh_public_key && ! -v target_password ]]; then
-  echo 'Neither ssh key nor user password set - system will be inaccessible' >&2
+if [[ ! -v target_password ]]; then
+  echo 'User password not specified' >&2
   exit 1
 fi
 
@@ -356,20 +352,9 @@ chroot_actions() {
   fi
 
   # Set up user login
-  useradd -m -s /bin/bash "${target_user}"
-  if [[ -v target_password ]]; then
-    echo -e "${target_password}\n${target_password}" | passwd root
-    echo -e "${target_password}\n${target_password}" | passwd "$target_user"
-  fi
-  if [[ -v ssh_public_key ]]; then
-    apt-get install -y ssh
-    local homedir
-    homedir=$(eval echo ~"${target_user}")
-    mkdir -m 700 "${homedir}/.ssh"
-    echo "${ssh_public_key}" > "${homedir}/.ssh/authorized_keys"
-    chmod 600 "${homedir}/.ssh/authorized_keys"
-    chown -R "${target_user}:${target_user}" "${homedir}"
-  fi
+  groupadd -r wheel
+  useradd -m -s /bin/bash -G wheel "${target_user}"
+  echo -e "${target_password}\n${target_password}" | passwd "$target_user"
 
   # Set up network
   systemctl enable systemd-networkd
@@ -383,7 +368,7 @@ chroot_actions() {
   # Finish up
   apt-get clean
 }
-export root_device target_hostname use_lvm partition_type encryption_password distro target_user target_password ssh_public_key kernel_parameters
+export root_device target_hostname use_lvm partition_type encryption_password distro target_user target_password kernel_parameters
 chroot /target /bin/bash -O nullglob -O extglob -ec "$(declare -f chroot_actions) && chroot_actions"
 if [[ -v quit_after_chroot ]]; then
   echo 'Quitting before cleanup'
