@@ -342,7 +342,7 @@ chroot_actions() {
   fi
 
   # Common packages
-  apt-get install -y netbase systemd-sysv whiptail dracut e2fsprogs
+  apt-get install -y netbase systemd-sysv whiptail sudo dracut e2fsprogs
 
   # Distro-specific kernel packages
   if [[ $distro = ubuntu ]]; then
@@ -352,8 +352,8 @@ chroot_actions() {
   fi
 
   # Set up user login
-  groupadd -r wheel
-  useradd -m -s /bin/bash -G wheel "${target_user}"
+  useradd -m -s /bin/bash -G sudo "${target_user}"
+  echo -e "${target_password}\n${target_password}" | passwd root
   echo -e "${target_password}\n${target_password}" | passwd "$target_user"
 
   # Set up network
