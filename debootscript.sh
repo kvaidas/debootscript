@@ -212,6 +212,15 @@ elif [[ $partition_type = mbr ]]; then
   echo "$partition_script" | sfdisk --label dos "${root_device}"
 fi
 
+# Set partition names
+if [[ "$root_device" =~ [0-9]$ ]]; then
+    boot_partition="${root_device}p1"
+    root_partition="${root_device}p2"
+else
+    boot_partition="${root_device}1"
+    root_partition="${root_device}2"
+fi
+
 # Encryption
 if [[ -v encryption_password ]]; then
   echo -n "$encryption_password" \
@@ -219,8 +228,8 @@ if [[ -v encryption_password ]]; then
     --key-file - \
     --iter-time 10000 \
     --type luks2 \
-    "$root_device"2
-  echo -n "$encryption_password" | cryptsetup luksOpen --key-file=- "${root_device}2" encrypted
+    "$root_partition"
+  echo -n "$encryption_password" | cryptsetup luksOpen --key-file=- "$root_partition" encrypted
 fi
 
 # LVM
@@ -229,17 +238,17 @@ if [[ -v use_lvm ]]; then
     pvcreate /dev/mapper/encrypted
     vgcreate root_vg /dev/mapper/encrypted
   else
-    pvcreate "${root_device}"2
-    vgcreate root_vg "${root_device}"2
+    pvcreate "$root_partition"
+    vgcreate root_vg "$root_partition"
   fi
   lvcreate -y -l 100%FREE -n root_lv root_vg
 fi
 
 # Create filesystems
 if [[ $partition_type = gpt ]]; then
-  mkfs.fat -F32 "$root_device"1
+  mkfs.fat -F32 "$boot_partition"
 else
-  mkfs.ext2 -m 1 "$root_device"1
+  mkfs.ext2 -m 1 "$boot_partition"
 fi
 
 if [[ -v use_lvm ]]; then
@@ -247,7 +256,7 @@ if [[ -v use_lvm ]]; then
 elif [[ -v encryption_password ]]; then
   mkfs.ext4 -m 1 /dev/mapper/encrypted
 else
-  mkfs.ext4 -m 1 "$root_device"2
+  mkfs.ext4 -m 1 "$root_partition"
 fi
 
 # Mount filesystems
@@ -257,15 +266,15 @@ if [[ -v use_lvm ]]; then
 elif [[ -v encryption_password ]]; then
   mount /dev/mapper/encrypted /target
 else
-  mount "${root_device}"2 /target
+  mount "$root_partition" /target
 fi
 
 if [[ $partition_type = gpt ]]; then
   mkdir -p /target/boot/efi
-  mount -o umask=077 "${root_device}"1 /target/boot/efi
+  mount -o umask=077 "$boot_partition" /target/boot/efi
 else
   mkdir /target/boot
-  mount "${root_device}"1 /target/boot
+  mount "$boot_partition" /target/boot
 fi
 
 # Debootstrap
@@ -277,7 +286,7 @@ if [[ -v use_lvm ]]; then
 elif [[ -v encryption_password ]]; then
   fstab_root='/dev/mapper/encrypted'
 else
-  fstab_root=$(blkid -o export "$root_device"2 | grep -E '^UUID=')
+  fstab_root=$(blkid -o export "$root_partition" | grep -E '^UUID=')
 fi
 if [[ $partition_type = gpt ]]; then
     boot_mountpoint='/boot/efi'
