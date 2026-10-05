@@ -290,12 +290,14 @@ else
 fi
 if [[ $partition_type = gpt ]]; then
     boot_mountpoint='/boot/efi'
+    boot_filesystem='vfat'
 else
     boot_mountpoint='/boot'
+    boot_filesystem='ext2'
 fi
 printf '%s\n' \
   "$fstab_root / ext4 rw,noatime,nodiratime 0 1" \
-  "${root_device}1 $boot_mountpoint ext2 rw 0 1" \
+  "$boot_partition $boot_mountpoint $boot_filesystem rw 0 1" \
   > /target/etc/fstab
 
 # Configure EFI bootloader
