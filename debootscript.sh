@@ -3,7 +3,13 @@ set -e
 set -x
 shopt -s nullglob
 shopt -s extglob
-kernel_parameters='rd.shell rd.auto console=ttyS0 console=tty0 SYSTEMD_SULOGIN_FORCE'
+
+kernel_parameters='rd.shell rd.auto SYSTEMD_SULOGIN_FORCE console=tty0 quiet'
+
+# Use the serial port if available
+if grep -q ttyS0 /sys/class/tty/console/active; then
+    kernel_parameters+=' console ttyS0'
+fi
 
 ###########################
 # Print usage information #
