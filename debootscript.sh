@@ -185,8 +185,10 @@ fi
 sfdisk --dump "${root_device}" || true
 
 if [[ $partition_type = gpt ]]; then
-  boot_partition_size=${boot_partition_size:=100}
-  if [[ -v use_lvm ]] && [[ ! -v encryption_password ]]; then
+  boot_partition_size=${boot_partition_size:=500}
+  if [[ -v encryption_password ]]; then
+    root_partition_type="CA7D7CCB-63ED-4C53-861C-1742536059CC"
+  elif [[ -v use_lvm ]]; then
     root_partition_type="E6D6D379-F507-44C2-A23C-238F2A3DF928"
   else
     root_partition_type="4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709"
@@ -197,7 +199,7 @@ if [[ $partition_type = gpt ]]; then
     "
   echo "$partition_script" | sfdisk --label gpt "${root_device}"
 elif [[ $partition_type = mbr ]]; then
-  boot_partition_size=${boot_partition_size:=200}
+  boot_partition_size=${boot_partition_size:=500}
   if [[ -v use_lvm ]] && [[ ! -v encryption_password ]]; then
     root_partition_type="8e"
   else
