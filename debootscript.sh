@@ -361,7 +361,7 @@ chroot_actions() {
   fi
 
   # Common packages
-  apt-get install -y netbase systemd-sysv whiptail sudo dracut e2fsprogs
+  apt-get install -y netbase systemd-sysv sudo dracut e2fsprogs
 
   # Distro-specific kernel packages
   if [[ $distro = ubuntu ]]; then
