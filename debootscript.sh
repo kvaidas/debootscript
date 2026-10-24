@@ -184,8 +184,8 @@ fi
 # Create partitions
 sfdisk --dump "${root_device}" || true
 
+boot_partition_size=${boot_partition_size:=500}
 if [[ $partition_type = gpt ]]; then
-  boot_partition_size=${boot_partition_size:=500}
   if [[ -v encryption_password ]]; then
     root_partition_type="CA7D7CCB-63ED-4C53-861C-1742536059CC"
   elif [[ -v use_lvm ]]; then
@@ -199,7 +199,6 @@ if [[ $partition_type = gpt ]]; then
     "
   echo "$partition_script" | sfdisk --label gpt "${root_device}"
 elif [[ $partition_type = mbr ]]; then
-  boot_partition_size=${boot_partition_size:=500}
   if [[ -v use_lvm ]] && [[ ! -v encryption_password ]]; then
     root_partition_type="8e"
   else
